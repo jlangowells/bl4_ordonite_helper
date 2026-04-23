@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
-from threading import Timer
+from threading import Event, Thread
+from time import sleep
 from mods_base import build_mod, keybind, BoolOption, hook
 from unrealsdk import make_struct, find_all
 from unrealsdk.unreal import UObject, BoundFunction, IGNORE_STRUCT, WeakPointer
-from unrealsdk.logging import info, warning
+from unrealsdk.logging import warning
 from unrealsdk.hooks import Type
 
 # Used to clear out the deposit spot if anything gets stuck.
@@ -50,6 +50,93 @@ def _locate_ordonite_processor() -> Vector | None:
     warning("Could not locate Ordonite Processor.")
     return None
 
+class OrdoniteDepositerThread(Thread):
+    """Thread to handle depositing canisters with a delay to avoid collisions"""
+    def __init__(self, deposit_location: Vector | None = None):
+        super().__init__()
+        self.enabled = Event()
+        self.canisters = set()
+        self.deposit_location = deposit_location
+        self.running = True
+        self.daemon = True
+
+    def run(self):
+        while self.running:
+            self.enabled.wait()
+            if len(self.canisters) == 0:
+                self.enabled.clear()
+                continue
+            self.deposit()
+            # Wait a bit before the next deposit to avoid collisions.
+            sleep(DEPOSIT_DELAY)
+
+    def enqueue(self, canister: str):
+        """Trigger a deposit outside of the regular interval"""
+        self.canisters.add(canister)
+
+    def deposit(self):
+        """Deposit one enqueued canister"""
+        if len(self.canisters) == 0:
+            return
+        canister_name = self.canisters.pop()
+        if canister_name is not None and canister_name in undeposited_canisters:
+            canister = undeposited_canisters[canister_name]()
+            if canister is None:
+                undeposited_canisters.pop(canister_name, None)
+                return
+            if self.deposit_location is not None:
+                canister.K2_TeleportTo(self.deposit_location, IGNORE_STRUCT)
+            else:
+                warning("Cannot deposit canister without deposit location.")
+
+class OrdoniteDepositer:
+    """Wrapper that manages depositer thread lifecycle and allows recreating threads"""
+    def __init__(self):
+        self._thread: OrdoniteDepositerThread | None = None
+        self._start_thread()
+
+    def _start_thread(self):
+        """Create and start a new depositer thread"""
+        self._thread = OrdoniteDepositerThread(None)
+        self._thread.start()
+
+    def start(self):
+        """Create a fresh thread if the current one has stopped"""
+        if not self._thread or not self._thread.is_alive():
+            self._start_thread()
+
+    def enqueue(self, canister: str):
+        """Trigger a deposit outside of the regular interval"""
+        if self._thread and self._thread.is_alive():
+            self._thread.enqueue(canister)
+
+    def deposit(self):
+        """Deposit one enqueued canister"""
+        if self._thread and self._thread.is_alive():
+            self._thread.deposit()
+
+    def set_deposit_location(self, deposit_location: Vector):
+        """Set the deposit location for canisters"""
+        if self._thread and self._thread.is_alive():
+            self._thread.deposit_location = deposit_location
+
+    def stop(self):
+        """Stop the depositer thread"""
+        if self._thread and self._thread.is_alive():
+            self._thread.running = False
+
+    def pause(self):
+        """Pause the depositer"""
+        if self._thread and self._thread.is_alive():
+            self._thread.enabled.clear()
+
+    def resume(self):
+        """Resume the depositer"""
+        if self._thread and self._thread.is_alive():
+            self._thread.enabled.set()
+
+depositer = OrdoniteDepositer()
+
 def deposit_ordonite_canisters():
     """Deposit all canisters into the processor"""
     processor_location = _locate_ordonite_processor()
@@ -58,10 +145,10 @@ def deposit_ordonite_canisters():
         return
     deposit_location = make_struct(
         "Vector", X=processor_location.X, Y=processor_location.Y, Z=processor_location.Z + Z_OFFSET)
+    depositer.set_deposit_location(deposit_location)
 
     if len(undeposited_canisters) > 0:
         clear_distance = 0
-        delay = 0
         # Clear out the space by teleporting the canisters into the sky
         # then teleport them down with a delay to avoid collisions that cause failed teleports.
         for name in list(undeposited_canisters.keys()):
@@ -76,10 +163,8 @@ def deposit_ordonite_canisters():
                 Z=deposit_location.Z + HIGH_Z_OFFSET
             ), IGNORE_STRUCT)
             clear_distance += CLEAR_SPACING
-            Timer(delay,
-                  lambda c=canister, d=deposit_location: c.K2_TeleportTo(d, IGNORE_STRUCT)
-            ).start()
-            delay += DEPOSIT_DELAY
+            depositer.enqueue(name)
+        depositer.resume()
 
 @keybind("Manually Deposit Canisters")
 def manually_deposit_ordonite_canisters():
@@ -120,6 +205,7 @@ def enable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: B
     """Enable the canister hook to track canisters
     for auto depositing when the processor is active"""
     canister_hook.enable()
+    depositer.start()
     # Also trigger a deposit in case of extra canisters from the previous wave.
     if auto_deposit.value:
         deposit_ordonite_canisters()
@@ -132,6 +218,7 @@ def disable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: 
     """Disable the canister hook to stop tracking canisters
     for auto depositing when the processor is inactive"""
     canister_hook.disable()
+    depositer.stop()
 
 # Untrack canisters when they are deposited
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator_Carryable.Script_PearlGearGenerator_Carryable_C:GbxActorScriptEvt__OnPlacedInContainer', Type.POST)

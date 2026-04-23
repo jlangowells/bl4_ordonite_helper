@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+from threading import Timer
 from mods_base import build_mod, keybind, BoolOption, hook
 from unrealsdk import make_struct, find_all
-from unrealsdk.unreal import UObject, BoundFunction, IGNORE_STRUCT
+from unrealsdk.unreal import UObject, BoundFunction, IGNORE_STRUCT, WeakPointer
 from unrealsdk.logging import info, warning
 from unrealsdk.hooks import Type
 
+# Used to clear out the deposit spot if anything gets stuck.
+REALLY_HIGH_Z_OFFSET = 10000
+CLEAR_SPACING = 200
+# A distance that works to get canisters into the deposit spot relative to the processor.
 Z_OFFSET = 90
+# Used to avoid deposit collisions
+DEPOSIT_DELAY = 1.2
+# Used to identify the script run on canister creation.
 CANISTER_SCRIPT_CLASS = 'Script_PearlGearGenerator_Carryable_C'
 
 auto_deposit = BoolOption(
@@ -16,7 +25,11 @@ auto_deposit = BoolOption(
     value=True
 )
 
-def _locate_ordonite_processor():
+# Keep track of canisters that need to be deposited
+# to avoid depositing canisters twice before the object is destroyed.
+undeposited_canisters = {}
+
+def _locate_ordonite_processor() -> Vector | None:
     for container in find_all("CarryableObjectContainer"):
         if (
             # For the one in the Stone Demon Bounty Pack
@@ -32,50 +45,106 @@ def _locate_ordonite_processor():
                 container.RootComponent is not None
                 and container.RootComponent.RelativeLocation is not None
             ):
-                location = container.RootComponent.RelativeLocation
-                return make_struct("Vector", X=location.X, Y=location.Y, Z=location.Z + Z_OFFSET)
+                return container.RootComponent.RelativeLocation
             warning("Ordonite Processor lacks location information.")
     warning("Could not locate Ordonite Processor.")
     return None
 
-def _deposit_ordonite_canisters():
+def deposit_ordonite_canisters():
+    """Deposit all canisters into the processor"""
     processor_location = _locate_ordonite_processor()
     if processor_location is None:
         warning("Cannot deposit Ordonite Canisters without processor location.")
         return
+    deposit_location = make_struct(
+        "Vector", X=processor_location.X, Y=processor_location.Y, Z=processor_location.Z + Z_OFFSET)
 
-    for carryable in find_all("CarryableObject"):
-        if (
-            carryable.Name is not None
-            and "PearlGearGenerator" in carryable.Name
-        ):
-            info(f"Depositing {carryable.Name} at processor...")
-            if carryable.K2_TeleportTo(processor_location, IGNORE_STRUCT):
-                info(f"Successfully deposited {carryable.Name}.")
-                return
-            else:
-                warning(f"Failed to deposit {carryable.Name}.")
+    if len(undeposited_canisters) > 0:
+        clear_distance = 0
+        delay = 0
+        # Clear out the space by teleporting the canisters into the sky
+        # then teleport them down with a delay to avoid collisions that cause failed teleports.
+        for name in list(undeposited_canisters.keys()):
+            canister = undeposited_canisters[name]()
+            # If it's already been garbage collected, remove it from tracking and skip it.
+            if canister is None:
+                undeposited_canisters.pop(name, None)
+                continue
+            canister.K2_TeleportTo(make_struct("Vector",
+                X=deposit_location.X,
+                Y=deposit_location.Y + clear_distance,
+                Z=deposit_location.Z + REALLY_HIGH_Z_OFFSET
+            ), IGNORE_STRUCT)
+            clear_distance += CLEAR_SPACING
+            Timer(delay,
+                  lambda c=canister, d=deposit_location: c.K2_TeleportTo(d, IGNORE_STRUCT)
+            ).start()
+            delay += DEPOSIT_DELAY
 
 @keybind("Manually Deposit Canisters")
 def manually_deposit_ordonite_canisters():
     """Keybind to manually deposit canisters"""
     info("Manually depositing Ordonite Canisters...")
-    _deposit_ordonite_canisters()
+    deposit_ordonite_canisters()
 
-@hook('/Script/GbxGame.GbxActorScript:OnInit', Type.POST)
 def on_ordonite_canister_init(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
-    """Automatically deposit canisters when they are initialized"""
+    """Track canister creation and auto deposit if enabled"""
     if (
-        not auto_deposit.value
-        or obj is None
+        obj is None
         or obj.Class is None
         or obj.Class.Name != CANISTER_SCRIPT_CLASS
+        or obj.Outer is None
     ):
         return
-    info("Detected Ordonite Canister initialization, attempting to deposit...")
-    _deposit_ordonite_canisters()
+    undeposited_canisters[obj.Outer.Name] = WeakPointer(obj.Outer)
+    if auto_deposit.value:
+        deposit_ordonite_canisters()
+
+# The processor event flow is as follows:
+# 1. Activating (on lever pull)
+# 2. Active (accepting canisters)
+# 3. Active disabled then Releasing (after wave is complete)
+# 4a. [If not the final wave] Active (accepting canisters for next wave)
+# 4b. [If final wave] Complete (after final canister is deposited)
+# 5. CooldownIsActive then ResetMission then Idle (after killing last ordonite enemy)
+# There is also an Inactive state that I haven't seen trigger.
+# The GbxActorScriptEvt__OnCarryablePlacedInContainerBP event isn't stored in the scripts
+# and fires on depositing a canister. However, there's no obvious event for when the deposit ends.
+
+# This event fires all the time but is the only way to track canister creation.
+# Disabling the hook outside of processor events helps with performance.
+canister_hook = hook('/Script/GbxGame.GbxActorScript:OnInit', Type.POST)(on_ordonite_canister_init)
+
+# Happens when the processor is ready to receive canisters
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateEnabled', Type.POST)
+def enable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+    """Enable the canister hook to track canisters
+    for auto depositing when the processor is active"""
+    canister_hook.enable()
+
+# Happens when a wave is complete and the processor cannot accept canisters
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateDisabled', Type.POST)
+# Happens as the lever becomes usable again after a run
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:CooldownIsActive__OnStateEnabled', Type.POST)
+def disable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+    """Disable the canister hook to stop tracking canisters
+    for auto depositing when the processor is inactive"""
+    canister_hook.disable()
+
+# Untrack canisters when they are deposited
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator_Carryable.Script_PearlGearGenerator_Carryable_C:GbxActorScriptEvt__OnPlacedInContainer', Type.POST)
+def on_canister_deposit(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+    """Remove canister from tracking when it's deposited"""
+    if (
+        obj is None
+        or obj.Outer is None
+        or obj.Outer.Name is None
+    ):
+        return
+    undeposited_canisters.pop(obj.Outer.Name, None)
 
 build_mod(
     keybinds=[manually_deposit_ordonite_canisters],
-    options=[auto_deposit]
+    options=[auto_deposit],
+    on_disable=canister_hook.disable
 )

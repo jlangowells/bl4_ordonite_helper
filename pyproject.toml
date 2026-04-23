@@ -1,0 +1,12 @@
+[project]
+name = "bl4_ordonite_helper"
+version = "1"
+authors = [{ name = "Lango" }]
+description = "Filter loot, teleporting the loot you want for easy pickup and deleting the loot you don't."
+
+[tool.sdkmod]
+name = "Autordonite"
+license = {name = "GPL3", url = "https://choosealicense.com/licenses/gpl-3.0/" }
+download = "https://github.com/jlangowells/bl4_ordonite_helper/releases"
+version = "1"
+coop_support = "ClientSide"

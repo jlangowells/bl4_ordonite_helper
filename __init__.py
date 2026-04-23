@@ -100,11 +100,6 @@ class OrdoniteDepositer:
         self._thread = OrdoniteDepositerThread(None)
         self._thread.start()
 
-    def start(self):
-        """Create a fresh thread if the current one has stopped"""
-        if not self._thread or not self._thread.is_alive():
-            self._start_thread()
-
     def enqueue(self, canister: str):
         """Trigger a deposit outside of the regular interval"""
         if self._thread and self._thread.is_alive():
@@ -120,6 +115,13 @@ class OrdoniteDepositer:
         if self._thread and self._thread.is_alive():
             self._thread.deposit_location = deposit_location
 
+    def start(self):
+        """Start the depositer thread if it's not already running or resume it if it's paused"""
+        if self._thread and self._thread.is_alive():
+            self._thread.enabled.set()
+        else:
+            self._start_thread()
+
     def stop(self):
         """Stop the depositer thread"""
         if self._thread and self._thread.is_alive():
@@ -129,11 +131,6 @@ class OrdoniteDepositer:
         """Pause the depositer"""
         if self._thread and self._thread.is_alive():
             self._thread.enabled.clear()
-
-    def resume(self):
-        """Resume the depositer"""
-        if self._thread and self._thread.is_alive():
-            self._thread.enabled.set()
 
 depositer = OrdoniteDepositer()
 
@@ -164,7 +161,7 @@ def deposit_ordonite_canisters():
             ), IGNORE_STRUCT)
             clear_distance += CLEAR_SPACING
             depositer.enqueue(name)
-        depositer.resume()
+        depositer.start()
 
 @keybind("Manually Deposit Canisters")
 def manually_deposit_ordonite_canisters():
@@ -205,7 +202,6 @@ def enable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: B
     """Enable the canister hook to track canisters
     for auto depositing when the processor is active"""
     canister_hook.enable()
-    depositer.start()
     # Also trigger a deposit in case of extra canisters from the previous wave.
     if auto_deposit.value:
         deposit_ordonite_canisters()

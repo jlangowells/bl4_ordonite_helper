@@ -198,10 +198,12 @@ canister_hook = hook('/Script/GbxGame.GbxActorScript:OnInit', Type.POST)(on_ordo
 
 # Happens when the processor is ready to receive canisters
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateEnabled', Type.POST)
-def enable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+def enable_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
     """Enable the canister hook to track canisters
     for auto depositing when the processor is active"""
     canister_hook.enable()
+    depositer.start()
+    warning("Enabled canister tracking and depositing.")
     # Also trigger a deposit in case of extra canisters from the previous wave.
     if auto_deposit.value:
         deposit_ordonite_canisters()
@@ -210,11 +212,11 @@ def enable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: B
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateDisabled', Type.POST)
 # Happens as the lever becomes usable again after a run
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:CooldownIsActive__OnStateEnabled', Type.POST)
-def disable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+def disable_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
     """Disable the canister hook to stop tracking canisters
     for auto depositing when the processor is inactive"""
-    canister_hook.disable()
-    depositer.stop()
+    disable()
+    warning("Disabled canister tracking and depositing.")
 
 # Untrack canisters when they are deposited
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator_Carryable.Script_PearlGearGenerator_Carryable_C:GbxActorScriptEvt__OnPlacedInContainer', Type.POST)
@@ -228,13 +230,13 @@ def on_canister_deposit(obj: UObject, _args: WrappedStruct, _ret: Any, _func: Bo
         return
     undeposited_canisters.pop(obj.Outer.Name, None)
 
-def on_disable():
-    """Cleanup when the mod is disabled"""
+def disable():
+    """Disable the mod and clean up state"""
     canister_hook.disable()
     depositer.stop()
 
 build_mod(
     keybinds=[manually_deposit_ordonite_canisters],
     options=[auto_deposit],
-    on_disable=on_disable
+    on_disable=disable
 )

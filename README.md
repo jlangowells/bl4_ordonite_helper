@@ -15,11 +15,6 @@ Borderlands 4 Mod for automatically depositing canisters in ordonite processor e
 
 You can use the SDK mod console to toggle automatic depositing or change the manual deposit hotkey.
 
-## Future Goals
-
-Currently there are some issues with depositing multiple canisters at a time which will cause canisters to get stuck in a state in which
-you need to grapple and throw them to deposit. I'd like to add a queueing system to handle that and other edge cases in which a deposit fails.
-
 ## License
 
 GPL-3.0 - See LICENSE file for details

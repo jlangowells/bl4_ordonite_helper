@@ -120,6 +120,9 @@ def enable_canister_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: B
     """Enable the canister hook to track canisters
     for auto depositing when the processor is active"""
     canister_hook.enable()
+    # Also trigger a deposit in case of extra canisters from the previous wave.
+    if auto_deposit.value:
+        deposit_ordonite_canisters()
 
 # Happens when a wave is complete and the processor cannot accept canisters
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateDisabled', Type.POST)

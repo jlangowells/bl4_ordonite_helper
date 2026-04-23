@@ -2,7 +2,7 @@
 name = "bl4_ordonite_helper"
 version = "1"
 authors = [{ name = "Lango" }]
-description = "Filter loot, teleporting the loot you want for easy pickup and deleting the loot you don't."
+description = "Automatically or manually deposite ordonite canisters in the ordonite processor events."
 
 [tool.sdkmod]
 name = "Autordonite"

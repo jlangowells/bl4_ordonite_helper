@@ -232,8 +232,13 @@ def on_canister_deposit(obj: UObject, _args: WrappedStruct, _ret: Any, _func: Bo
         return
     undeposited_canisters.pop(obj.Outer.Name, None)
 
+def on_disable():
+    """Cleanup when the mod is disabled"""
+    canister_hook.disable()
+    depositer.stop()
+
 build_mod(
     keybinds=[manually_deposit_ordonite_canisters],
     options=[auto_deposit],
-    on_disable=canister_hook.disable
+    on_disable=on_disable
 )

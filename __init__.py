@@ -19,9 +19,14 @@ auto_deposit = BoolOption(
 def _locate_ordonite_processor():
     for container in find_all("CarryableObjectContainer"):
         if (
-            container.FactsConduit is not None
-            and container.FactsConduit.SubmapName is not None
-            and 'PearlGenerator' in container.FactsConduit.SubmapName.Name
+            # For the one in the Stone Demon Bounty Pack
+            "PearlGearGenerator" in container.Name
+            # For the ones in the base game
+            or (
+                container.FactsConduit is not None
+                and container.FactsConduit.SubmapName is not None
+                and 'PearlGenerator' in container.FactsConduit.SubmapName.Name
+            )
         ):
             if (
                 container.RootComponent is not None

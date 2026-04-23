@@ -10,12 +10,12 @@ from unrealsdk.logging import info, warning
 from unrealsdk.hooks import Type
 
 # Used to clear out the deposit spot if anything gets stuck.
-REALLY_HIGH_Z_OFFSET = 10000
+HIGH_Z_OFFSET = 3000
 CLEAR_SPACING = 200
 # A distance that works to get canisters into the deposit spot relative to the processor.
 Z_OFFSET = 90
 # Used to avoid deposit collisions
-DEPOSIT_DELAY = 1.2
+DEPOSIT_DELAY = 1.5
 # Used to identify the script run on canister creation.
 CANISTER_SCRIPT_CLASS = 'Script_PearlGearGenerator_Carryable_C'
 
@@ -73,7 +73,7 @@ def deposit_ordonite_canisters():
             canister.K2_TeleportTo(make_struct("Vector",
                 X=deposit_location.X,
                 Y=deposit_location.Y + clear_distance,
-                Z=deposit_location.Z + REALLY_HIGH_Z_OFFSET
+                Z=deposit_location.Z + HIGH_Z_OFFSET
             ), IGNORE_STRUCT)
             clear_distance += CLEAR_SPACING
             Timer(delay,
@@ -84,7 +84,6 @@ def deposit_ordonite_canisters():
 @keybind("Manually Deposit Canisters")
 def manually_deposit_ordonite_canisters():
     """Keybind to manually deposit canisters"""
-    info("Manually depositing Ordonite Canisters...")
     deposit_ordonite_canisters()
 
 def on_ordonite_canister_init(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):

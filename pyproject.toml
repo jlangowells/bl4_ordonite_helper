@@ -3,6 +3,9 @@ name = "bl4_ordonite_helper"
 version = "1"
 authors = [{ name = "Lango" }]
 description = "Automatically or manually deposite ordonite canisters in the ordonite processor events."
+dependencies = [
+    'oak2_mod_manager >= 0.2'
+]
 
 [tool.sdkmod]
 name = "Autordonite"

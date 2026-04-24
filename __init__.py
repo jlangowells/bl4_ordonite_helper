@@ -5,7 +5,7 @@ from threading import Event, Thread
 from time import sleep
 from mods_base import build_mod, keybind, BoolOption, hook
 from unrealsdk import make_struct, find_all
-from unrealsdk.unreal import UObject, BoundFunction, IGNORE_STRUCT, WeakPointer
+from unrealsdk.unreal import UObject, BoundFunction, IGNORE_STRUCT, WeakPointer, WrappedStruct
 from unrealsdk.logging import warning
 from unrealsdk.hooks import Type
 
@@ -168,19 +168,6 @@ def manually_deposit_ordonite_canisters():
     """Keybind to manually deposit canisters"""
     deposit_ordonite_canisters()
 
-def on_ordonite_canister_init(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
-    """Track canister creation and auto deposit if enabled"""
-    if (
-        obj is None
-        or obj.Class is None
-        or obj.Class.Name != CANISTER_SCRIPT_CLASS
-        or obj.Outer is None
-    ):
-        return
-    undeposited_canisters[obj.Outer.Name] = WeakPointer(obj.Outer)
-    if auto_deposit.value:
-        deposit_ordonite_canisters()
-
 # The processor event flow is as follows:
 # 1. Activating (on lever pull)
 # 2. Active (accepting canisters)
@@ -194,14 +181,26 @@ def on_ordonite_canister_init(obj: UObject, _args: WrappedStruct, _ret: Any, _fu
 
 # This event fires all the time but is the only way to track canister creation.
 # Disabling the hook outside of processor events helps with performance.
-canister_hook = hook('/Script/GbxGame.GbxActorScript:OnInit', Type.POST)(on_ordonite_canister_init)
+@hook('/Script/GbxGame.GbxActorScript:OnInit', Type.POST)
+def on_ordonite_canister_init(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+    """Track canister creation and auto deposit if enabled"""
+    if (
+        obj is None
+        or obj.Class is None
+        or obj.Class.Name != CANISTER_SCRIPT_CLASS
+        or obj.Outer is None
+    ):
+        return
+    undeposited_canisters[obj.Outer.Name] = WeakPointer(obj.Outer)
+    if auto_deposit.value:
+        deposit_ordonite_canisters()
 
 # Happens when the processor is ready to receive canisters
 @hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateEnabled', Type.POST)
-def enable_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+def enable_hook(_obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
     """Enable the canister hook to track canisters
     for auto depositing when the processor is active"""
-    canister_hook.enable()
+    on_ordonite_canister_init.enable()
     depositer.start()
     warning("Enabled canister tracking and depositing.")
     # Also trigger a deposit in case of extra canisters from the previous wave.
@@ -209,17 +208,17 @@ def enable_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunct
         deposit_ordonite_canisters()
 
 # Happens when a wave is complete and the processor cannot accept canisters
-@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateDisabled', Type.POST)
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:Active__OnStateDisabled')
 # Happens as the lever becomes usable again after a run
-@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:CooldownIsActive__OnStateEnabled', Type.POST)
-def disable_hook(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator.Script_PearlGearGenerator_C:CooldownIsActive__OnStateEnabled')
+def disable_hook(_obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
     """Disable the canister hook to stop tracking canisters
     for auto depositing when the processor is inactive"""
-    disable()
+    on_disable()
     warning("Disabled canister tracking and depositing.")
 
 # Untrack canisters when they are deposited
-@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator_Carryable.Script_PearlGearGenerator_Carryable_C:GbxActorScriptEvt__OnPlacedInContainer', Type.POST)
+@hook('/Game/DLC/Cello/InteractiveObjects/PearlGearGenerator/Script_PearlGearGenerator_Carryable.Script_PearlGearGenerator_Carryable_C:GbxActorScriptEvt__OnPlacedInContainer')
 def on_canister_deposit(obj: UObject, _args: WrappedStruct, _ret: Any, _func: BoundFunction):
     """Remove canister from tracking when it's deposited"""
     if (
@@ -230,13 +229,17 @@ def on_canister_deposit(obj: UObject, _args: WrappedStruct, _ret: Any, _func: Bo
         return
     undeposited_canisters.pop(obj.Outer.Name, None)
 
-def disable():
+def on_disable():
     """Disable the mod and clean up state"""
-    canister_hook.disable()
+    on_ordonite_canister_init.disable()
     depositer.stop()
 
 build_mod(
     keybinds=[manually_deposit_ordonite_canisters],
     options=[auto_deposit],
-    on_disable=disable
+    hooks=[
+        enable_hook,
+        disable_hook,
+        on_canister_deposit
+    ]
 )
